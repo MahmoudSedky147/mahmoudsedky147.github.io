@@ -827,7 +827,6 @@
       </div>
       <div id="accountsList" class="row g-2"></div>
 
-      <!-- Botón de reinicio -->
       <div class="mt-4 pt-3 border-top border-secondary">
         <button class="btn-danger-custom" onclick="resetAllData()">
           <i class="bi bi-exclamation-triangle"></i> Reiniciar todos los datos
@@ -1045,6 +1044,7 @@
 
   <!-- ===== SCRIPTS ===== -->
   <script>
+    // ===== CONFIGURACIÓN DB =====
     const db = new Dexie('FinanzasDB');
     db.version(11).stores({
       categories: '++id, nombre, esPredeterminado, color, oculta, orden',
@@ -1060,7 +1060,6 @@
           { nombre: 'Binance' }
         ]);
       }
-      // Asignar orden a categorías existentes (solo si no tienen)
       const cats = await tx.table('categories').toArray();
       const needsOrder = cats.some(c => c.orden === undefined);
       if (needsOrder) {
@@ -1069,7 +1068,6 @@
           await tx.table('categories').update(cats[i].id, { orden: i });
         }
       }
-      // Convertir fechas de movimientos a string
       const movements = await tx.table('movements').toArray();
       for (const mov of movements) {
         if (typeof mov.fecha !== 'string') {
@@ -1111,9 +1109,9 @@
     let showAllMovements = false;
     let sortableInstance = null;
 
-    // ===== CATEGORÍAS POR DEFECTO (solo genéricas) =====
     const defaultCategories = ['Ocio', 'Pasaje', 'Comida', 'Alquiler', 'Aseo personal'];
 
+    // ===== UTILIDADES =====
     function parseLocalDate(dateStr) {
       const parts = dateStr.split('-');
       return new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, parseInt(parts[2]));
@@ -1134,6 +1132,7 @@
       return sign + abs.toFixed(2).replace('.', ',') + '$';
     }
 
+    // ===== INICIALIZACIÓN =====
     document.addEventListener('DOMContentLoaded', async () => {
       await loadDefaultData();
       await refreshAll();
@@ -1151,12 +1150,13 @@
         document.getElementById('sidebar').classList.remove('open');
         document.getElementById('sidebarOverlay').classList.remove('active');
       });
+
+      setupFormSubmissions();
     });
 
     async function loadDefaultData() {
       const catCount = await db.categories.count();
       if (catCount === 0) {
-        // Crear categorías genéricas
         for (const nombre of defaultCategories) {
           await db.categories.add({ nombre, esPredeterminado: 1, color: '#E8622C', oculta: 0 });
         }
@@ -1166,7 +1166,6 @@
           await db.categories.update(cats[i].id, { orden: i });
         }
       }
-      // Asegurar cuentas por defecto
       const accCount = await db.accounts.count();
       if (accCount === 0) {
         await db.accounts.bulkAdd([
@@ -1176,6 +1175,82 @@
       }
     }
 
+    // ===== CONFIGURACIÓN DE SUBMIT DE FORMULARIOS Y NAVEGACIÓN POR ENTER =====
+    function setupFormSubmissions() {
+      const formConfigs = [
+        { id: 'movementForm', saveFn: saveMovement },
+        { id: 'loanForm', saveFn: saveLoan },
+        { id: 'goalForm', saveFn: saveGoal },
+        { id: 'categoryForm', saveFn: saveCategory },
+        { id: 'accountForm', saveFn: saveAccount }
+      ];
+
+      formConfigs.forEach(({ id, saveFn }) => {
+        const form = document.getElementById(id);
+        if (!form) return;
+
+        // Listener de submit
+        form.addEventListener('submit', function(e) {
+          e.preventDefault();
+          if (this.checkValidity()) {
+            saveFn();
+          } else {
+            this.reportValidity();
+          }
+        });
+
+        // Campos navegables (excluyendo hidden)
+        const inputs = Array.from(form.querySelectorAll('input:not([type="hidden"]), select, textarea'));
+
+        // Función para avanzar al siguiente campo o submit
+        function advanceToNext(currentIndex) {
+          if (currentIndex === inputs.length - 1) {
+            form.requestSubmit();
+          } else {
+            const nextInput = inputs[currentIndex + 1];
+            if (nextInput) {
+              nextInput.focus();
+              // Si el siguiente es un select, abrirlo si es posible
+              if (nextInput.tagName === 'SELECT') {
+                try { nextInput.showPicker(); } catch (e) { /* fallback: solo enfocar */ }
+              }
+            }
+          }
+        }
+
+        // Evento keydown para navegación con Enter
+        inputs.forEach((input, index) => {
+          input.addEventListener('keydown', function(e) {
+            if (e.key === 'Enter' && !e.shiftKey) {
+              e.preventDefault();
+              // Si es un select, abrir el picker en lugar de avanzar
+              if (this.tagName === 'SELECT') {
+                try {
+                  this.showPicker();
+                  // No avanzamos aquí, el change se encargará después
+                } catch (err) {
+                  // Fallback: solo enfocar
+                  this.focus();
+                }
+                return;
+              }
+              // Para otros campos, avanzar al siguiente o submit
+              advanceToNext(index);
+            }
+          });
+
+          // Para selects, al cambiar la opción (después de seleccionar), avanzar
+          if (input.tagName === 'SELECT') {
+            input.addEventListener('change', function() {
+              // Avanzar al siguiente campo o submit
+              advanceToNext(index);
+            });
+          }
+        });
+      });
+    }
+
+    // ===== REFRESH =====
     async function refreshAll() {
       await refreshDashboard();
       await refreshMovements();
@@ -1187,6 +1262,7 @@
       await refreshFilterDropdowns();
     }
 
+    // ===== DASHBOARD =====
     async function refreshDashboard() {
       const categories = await db.categories.toArray();
       const catMap = {};
@@ -1350,6 +1426,7 @@
       });
     }
 
+    // ===== MOVIMIENTOS =====
     async function refreshMovements() {
       const filterType = document.getElementById('filterType').value;
       const filterCategory = document.getElementById('filterCategory').value;
@@ -1494,6 +1571,7 @@
       refreshMovements();
     }
 
+    // ===== CRUD MOVIMIENTOS =====
     function openAddMovement() {
       document.getElementById('movementForm').reset();
       document.getElementById('editMovementId').value = '';
@@ -1550,6 +1628,7 @@
       await refreshAll();
     }
 
+    // ===== PRÉSTAMOS =====
     async function refreshLoans() {
       const pending = await db.loans.where('estado').equals('pendiente').toArray();
       const paid = await db.loans.where('estado').equals('pagado').toArray();
@@ -1709,6 +1788,7 @@
       await refreshAll();
     }
 
+    // ===== METAS =====
     async function getGoalRemaining(goal) {
       if (goal.lograda) return 0;
       if (!goal.categoriaAnclaId) return goal.costoTotal;
@@ -1812,6 +1892,7 @@
       await refreshAll();
     }
 
+    // ===== CATEGORÍAS =====
     async function refreshCategoriesList() {
       const categories = await db.categories.toArray();
       const container = document.getElementById('categoriesList');
@@ -1923,6 +2004,7 @@
       await refreshAll();
     }
 
+    // ===== CUENTAS =====
     async function refreshAccountsList() {
       const accounts = await db.accounts.toArray();
       const container = document.getElementById('accountsList');
@@ -2055,7 +2137,7 @@
       });
     }
 
-    // ===== REINICIAR TODOS LOS DATOS =====
+    // ===== REINICIO DE DATOS =====
     async function resetAllData() {
       if (!confirm('¿Seguro que quieres borrar todos los datos? Esta acción no se puede deshacer.')) return;
       if (!confirm('Confirmación final: ¿Estás seguro de que deseas eliminar todos los movimientos, préstamos y metas?')) return;
@@ -2064,10 +2146,8 @@
         await db.movements.clear();
         await db.loans.clear();
         await db.goals.clear();
-        // También borramos categorías para recrear las genéricas (se conservan las cuentas)
         await db.categories.clear();
 
-        // Recargar datos por defecto
         await loadDefaultData();
         await refreshAll();
         alert('Todos los datos han sido reiniciados correctamente.');
@@ -2077,7 +2157,7 @@
       }
     }
 
-    // Exposición de funciones globales (para onclick en HTML)
+    // ===== EXPOSICIÓN DE FUNCIONES GLOBALES =====
     window.openAddMovement = openAddMovement;
     window.editMovement = editMovement;
     window.saveMovement = saveMovement;
